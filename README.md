@@ -1,25 +1,22 @@
 # @iris-gate/person
 
-**Sovereign personal vault for The Burgess Principle.**
+**Keep your case facts private. Prove whether a human reviewed them.**
 
-Keep your real case facts private on your device. Send only a cryptographic fingerprint to institutions and AIs. Receive a signed receipt proving whether a real human reviewed your specific case — or not. Store everything in an encrypted vault. Export for any tribunal, ombudsman, or court.
-
-> Protected under UK Certification Mark **UK00004343685** — *The Burgess Principle*.  
-> Connected to the main Iris command centre: [github.com/ljbudgie/Iris](https://github.com/ljbudgie/Iris)
+A sovereign personal vault that lets you send a cryptographic fingerprint (not your data) to institutions, then collect signed receipts showing if a real person looked at your case — or if you were ignored.
 
 ---
 
-## The Inversion (plain English)
+## The Inversion
 
-Normally, you hand over all your facts to an institution and hope they act fairly. **The Burgess Principle inverts this.**
+Normally, you hand over all your personal information and hope for the best. This inverts that:
 
-1. **You keep your facts.** They never leave your device.  
-2. **You send a fingerprint** — a one-way SHA-256 hash — no institution can reverse it back to your data.  
-3. **They sign a receipt** saying whether a real human reviewed your case (`SOVEREIGN`) or whether you were processed by automation, ignored, or refused (`NULL`).  
-4. **You store the signed receipt** in an encrypted vault that only you control.  
-5. **If needed**, you export a self-contained verification bundle for a tribunal — including step-by-step instructions that require no specialist knowledge.
+1. **Your facts stay on your device.** You never send them.
+2. **You send a fingerprint** — a one-way hash that can't be reversed.
+3. **The institution signs a receipt** saying `SOVEREIGN` (human reviewed) or `NULL` (no human review).
+4. **You store the receipt** in your encrypted vault.
+5. **If needed**, you export everything for a tribunal with built-in instructions anyone can follow.
 
-A `NULL` receipt is grounds for challenge. A `SOVEREIGN` receipt proves accountability.
+`NULL` = grounds for challenge. `SOVEREIGN` = proof of accountability.
 
 ---
 
@@ -29,7 +26,7 @@ A `NULL` receipt is grounds for challenge. A `SOVEREIGN` receipt proves accounta
 npm install @iris-gate/person
 ```
 
-No external dependencies. Uses only Node.js built-in `crypto`.
+Zero dependencies. Uses only Node.js built-in crypto.
 
 ---
 
@@ -38,10 +35,10 @@ No external dependencies. Uses only Node.js built-in `crypto`.
 ```ts
 import { createPerson, buildReceipt, generateKeyPair, verifyPackage } from '@iris-gate/person';
 
-// ── 1. Create your personal vault ──────────────────────────────────────────
+// 1. Create your vault
 const person = createPerson();
 
-// ── 2. Commit your case facts (facts stay on your device) ──────────────────
+// 2. Commit your case facts (they never leave your device)
 const { commitment, record } = person.commit(
   'DWP ESA Appeal 2026',
   {
@@ -53,17 +50,14 @@ const { commitment, record } = person.commit(
   ['dwp', 'esa', 'appeal'],
 );
 
-// Send ONLY `commitment` to the institution — never the facts object
-console.log('Send this to the institution:', commitment);
-// { hash: 'a3f9...', timestamp: '...', nonce: '...', version: 1 }
+// Send ONLY the commitment to the institution — never your facts
+console.log('Send this:', commitment);
 
-// ── 3. Receive the institution's signed receipt ────────────────────────────
-// (In real use, the institution builds and sends this to you)
-const institutionKeys = generateKeyPair(); // institution's keys
-
+// 3. Receive their signed receipt
+const institutionKeys = generateKeyPair();
 const receipt = buildReceipt({
   commitment,
-  outcome: 'NULL',      // No human reviewed this case
+  outcome: 'NULL',  // No human reviewed this
   reason: 'Automated decision system applied standard criteria.',
   issuer: 'Department for Work and Pensions',
   keyPair: institutionKeys,
@@ -71,19 +65,28 @@ const receipt = buildReceipt({
 
 person.receive(record.id, receipt);
 
-// ── 4. Check for NULL receipts (grounds for challenge) ────────────────────
+// 4. Find cases with no human review
 const nullCases = person.challenge();
-console.log(`${nullCases.length} case(s) with no human review — ready to challenge`);
+console.log(`${nullCases.length} case(s) ready to challenge`);
 
-// ── 5. Export for tribunal ────────────────────────────────────────────────
-const exportBundle = person.exportRecord(record.id);
-console.log(exportBundle.verificationInstructions.join('\n'));
+// 5. Export for tribunal
+const bundle = person.exportRecord(record.id);
 
-// ── 6. Independent verification (tribunal side) ───────────────────────────
-const result = verifyPackage(exportBundle);
-console.log(result.valid);    // true
-console.log(result.summary);  // plain-English explanation
+// 6. Anyone can verify
+const result = verifyPackage(bundle);
+console.log(result.valid);   // true
+console.log(result.summary); // Plain-English explanation
 ```
+
+---
+
+## Key Features
+
+- **Commit facts** → Creates a tamper-proof hash. Your data never leaves your device.
+- **Receive receipts** → Stores signed institutional responses. Verifies signatures automatically.
+- **Challenge NULL outcomes** → Find all cases where no human reviewed your data.
+- **Export for tribunal** → Self-contained bundle with step-by-step verification instructions.
+- **Encrypted backup** → AES-256-GCM vault with secure key derivation.
 
 ---
 
@@ -91,115 +94,81 @@ console.log(result.summary);  // plain-English explanation
 
 ### `createPerson(keyPair?)`
 
-Creates a new sovereign personal vault. Returns a `PersonClient`.
+Create a new vault or restore from saved keys.
 
 ```ts
-const person = createPerson();          // fresh key-pair
-const person = createPerson(savedKeys); // restore from saved key-pair
+const person = createPerson();          // New vault
+const person = createPerson(savedKeys); // Restore
 ```
 
-### `PersonClient` methods
+### PersonClient Methods
 
-| Method | Description |
-|---|---|
+| Method | What it does |
+|--------|--------------|
 | `commit(label, facts, tags?)` | Hash facts into a commitment. Facts stay local. |
 | `receive(recordId, receipt)` | Store a signed receipt (validates signature first). |
-| `challenge()` | Return all records with `NULL` receipts. |
-| `challengeAll(filters?)` | Filter NULL receipts by issuer, label, or tags. |
-| `search(query)` | Search by label/tag or `"SOVEREIGN"` / `"NULL"`. |
-| `verify(recordId)` | Cryptographically verify a vault record. |
-| `exportRecord(recordId)` | Export a self-contained bundle for tribunals. |
-| `exportVaultEncrypted(passphrase)` | AES-256-GCM encrypted vault backup. |
-| `importVaultEncrypted(vault, passphrase)` | Restore from encrypted backup. |
-| `listRecords()` | Return all vault records. |
-| `getRecord(recordId)` | Return one record by ID. |
+| `challenge()` | Get all records with `NULL` receipts. |
+| `challengeAll(filters?)` | Filter by issuer, label, or tags. |
+| `search(query)` | Search by label, tag, or outcome. |
+| `verify(recordId)` | Cryptographically verify a record. |
+| `exportRecord(recordId)` | Export for tribunal with instructions. |
+| `exportVaultEncrypted(passphrase)` | Encrypted vault backup. |
+| `importVaultEncrypted(vault, passphrase)` | Restore from backup. |
+| `listRecords()` | List all records. |
+| `getRecord(recordId)` | Get one record. |
 
-### Institution helpers
+### For Institutions
 
 ```ts
 import { buildReceipt, verifyPersonCommitment } from '@iris-gate/person';
 
-// Build and sign a receipt (institution side)
 const receipt = buildReceipt({ commitment, outcome: 'SOVEREIGN', reason, issuer, keyPair });
-
-// Verify that a person's revealed facts match their commitment
-const ok = verifyPersonCommitment(commitment, facts, nonce); // → boolean
+const valid = verifyPersonCommitment(commitment, facts, nonce);
 ```
 
-### Third-party verification
+### For Tribunals
 
 ```ts
 import { verifyPackage } from '@iris-gate/person';
 
 const result = verifyPackage(exportBundle);
-// result.valid           → boolean
-// result.commitmentValid → boolean  (facts hash matches)
-// result.signatureValid  → boolean  (institution signature valid)
-// result.hashesMatch     → boolean  (receipt links to commitment)
-// result.summary         → string   (plain-English explanation)
+// result.valid           → All checks passed
+// result.commitmentValid → Facts hash matches
+// result.signatureValid  → Institution signature valid
+// result.hashesMatch     → Receipt links to commitment
+// result.summary         → Plain-English explanation
 ```
 
 ---
 
-## Cryptographic Flow
+## Cryptographic Guarantees
 
-```
-PERSON DEVICE                         INSTITUTION
-─────────────────                     ─────────────────────
-facts = { ... }  ─────────────────────────────────────────▶  (never sent)
-nonce = random32bytes
+| What | How |
+|------|-----|
+| **Hashing** | SHA-256 |
+| **Signatures** | ed25519 |
+| **Vault encryption** | AES-256-GCM with PBKDF2-SHA256 (200,000 iterations) |
 
-hash = SHA256(nonce + ":" + JSON(facts))  ──▶  commitment = { hash, nonce*, timestamp }
-                                               (* nonce optionally kept private)
-
-                   ◀──────────────────────────  receipt = {
-                                                  commitmentHash: hash,
-                                                  outcome: "SOVEREIGN" | "NULL",
-                                                  reason: "...",
-                                                  issuer: "...",
-                                                  issuedAt: "...",
-                                                  signature: ed25519(body, privKey),
-                                                  issuerPublicKey: pubKey,
-                                                }
-
-person.receive(recordId, receipt)  →  verifies ed25519 signature before storing
-
-person.exportRecord(recordId)  →  ExportPackage { record, verificationInstructions, ... }
-
-TRIBUNAL: verifyPackage(exportBundle)
-  ├─ Re-hash facts + nonce  →  must match commitment.hash
-  ├─ Verify ed25519 sig     →  must be valid for issuerPublicKey
-  └─ Check hash linkage     →  receipt.commitmentHash === commitment.hash
-```
-
-**Algorithms:**
-- Hashing: **SHA-256** (Node.js `crypto.createHash`)
-- Signatures: **ed25519** (Node.js `crypto.generateKeyPairSync` / `sign` / `verify`)
-- Vault encryption: **AES-256-GCM** with **PBKDF2-SHA256** key derivation (200,000 iterations)
+All crypto uses Node.js built-ins. No third-party libraries.
 
 ---
 
-## Vault Backup & Restore
+## Backup & Restore
 
 ```ts
-// Back up (encrypted)
-const encrypted = person.exportVaultEncrypted('my-strong-passphrase');
-// → { algorithm: 'aes-256-gcm', iv, authTag, salt, ciphertext, version }
-// Save this JSON to a file or cloud storage
+// Backup
+const encrypted = person.exportVaultEncrypted('strong-passphrase');
 
 // Restore
 const fresh = createPerson();
-fresh.importVaultEncrypted(encrypted, 'my-strong-passphrase');
+fresh.importVaultEncrypted(encrypted, 'strong-passphrase');
 ```
 
 ---
 
 ## Connection to Iris
 
-This package is the personal-vault layer of the **Iris** command centre ecosystem:
-
-- **Iris** ([github.com/ljbudgie/Iris](https://github.com/ljbudgie/Iris)) — the main command centre for The Burgess Principle.
-- **@iris-gate/person** *(this package)* — sovereign personal vault for individuals.
+This is the personal vault layer of the [Iris](https://github.com/ljbudgie/Iris) ecosystem — the command centre for The Burgess Principle.
 
 ---
 
@@ -207,7 +176,7 @@ This package is the personal-vault layer of the **Iris** command centre ecosyste
 
 > *"A human must review the specific case. Not the type of case. The actual case."*
 
-UK Certification Mark **UK00004343685** — all institutions using Iris-gate are certified under this standard.
+**UK Certification Mark UK00004343685**
 
 ---
 
