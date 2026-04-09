@@ -23,15 +23,17 @@
     "prepublishOnly": "npm run build"
   },
   "keywords": [
-    "iris-gate",
-    "burgess-principle",
-    "sovereign",
-    "vault",
-    "cryptography",
-    "ed25519",
-    "commitment",
-    "receipt",
-    "privacy"
+  "sovereign",
+  "digital-sovereignty",
+  "data-sovereignty",
+  "burgess-principle",
+  "personal-vault",
+  "cryptographic-receipts",
+  "ai-governance",
+  "self-sovereign-identity",
+  "ed25519",
+  "privacy-first"
+],
   ],
   "author": "LJ",
   "license": "MIT",
