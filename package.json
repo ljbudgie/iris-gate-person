@@ -1,7 +1,7 @@
 {
   "name": "@iris-gate/person",
   "version": "1.0.0",
-  "description": "Sovereign personal vault for The Burgess Principle – commit case facts, receive signed receipts, challenge institutions.",
+  "description": "Sovereign personal vault for The Burgess Principle – keep facts private, send cryptographic commitments, receive signed SOVEREIGN/NULL receipts, and export tribunal-ready bundles.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
@@ -23,19 +23,18 @@
     "prepublishOnly": "npm run build"
   },
   "keywords": [
-  "sovereign",
-  "digital-sovereignty",
-  "data-sovereignty",
-  "burgess-principle",
-  "personal-vault",
-  "cryptographic-receipts",
-  "ai-governance",
-  "self-sovereign-identity",
-  "ed25519",
-  "privacy-first"
-],
+    "sovereign",
+    "digital-sovereignty",
+    "data-sovereignty",
+    "burgess-principle",
+    "personal-vault",
+    "cryptographic-receipts",
+    "ai-governance",
+    "self-sovereign-identity",
+    "ed25519",
+    "privacy-first"
   ],
-  "author": "LJ",
+  "author": "Lewis James Burgess",
   "license": "MIT",
   "repository": {
     "type": "git",
