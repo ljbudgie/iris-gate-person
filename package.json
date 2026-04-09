@@ -1,0 +1,56 @@
+{
+  "name": "@iris-gate/person",
+  "version": "1.0.0",
+  "description": "Sovereign personal vault for The Burgess Principle – commit case facts, receive signed receipts, challenge institutions.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "node --experimental-vm-modules node_modules/.bin/jest",
+    "lint": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "iris-gate",
+    "burgess-principle",
+    "sovereign",
+    "vault",
+    "cryptography",
+    "ed25519",
+    "commitment",
+    "receipt",
+    "privacy"
+  ],
+  "author": "LJ",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ljbudgie/iris-gate-person.git"
+  },
+  "devDependencies": {
+    "@types/jest": "^29.5.14",
+    "@types/node": "^22.14.0",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.3.2",
+    "typescript": "^5.8.3"
+  },
+  "jest": {
+    "preset": "ts-jest",
+    "testEnvironment": "node",
+    "testMatch": [
+      "**/__tests__/**/*.test.ts"
+    ]
+  }
+}
