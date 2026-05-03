@@ -14,6 +14,15 @@ import {
   verifyRecord,
 } from '../index';
 import type { KeyPair, Commitment, Receipt, VaultRecord } from '../types';
+import {
+  decryptVault,
+  encryptVault,
+  hashPayload,
+  randomHex,
+  sha256,
+  signMessage,
+  verifySignature,
+} from '../crypto';
 
 // ── Shared institution key-pair ────────────────────────────────────────────
 let institutionKeys: KeyPair;
@@ -84,6 +93,15 @@ describe('commit', () => {
     const person = createPerson();
     const { commitment: c1 } = person.commit('Case A', { a: 1 });
     const { commitment: c2 } = person.commit('Case B', { a: 2 });
+    expect(c1.hash).not.toBe(c2.hash);
+  });
+
+  it('produces unique nonces for otherwise identical facts', () => {
+    const person = createPerson();
+    const facts = { repeated: true };
+    const { commitment: c1 } = person.commit('Case A', facts);
+    const { commitment: c2 } = person.commit('Case B', facts);
+    expect(c1.nonce).not.toBe(c2.nonce);
     expect(c1.hash).not.toBe(c2.hash);
   });
 });
@@ -187,6 +205,34 @@ describe('challengeAll', () => {
     expect(urgent).toHaveLength(1);
     expect(urgent[0].tags).toContain('urgent');
   });
+
+  it('filters by label case-insensitively', () => {
+    const person = createPerson();
+    const { commitment: c1, record: r1 } = person.commit('ESA Tribunal', { a: 1 });
+    const { commitment: c2, record: r2 } = person.commit('PIP Review', { b: 2 });
+
+    person.receive(r1.id, buildReceipt({ commitment: c1, outcome: 'NULL', reason: '', issuer: 'Test', keyPair: institutionKeys }));
+    person.receive(r2.id, buildReceipt({ commitment: c2, outcome: 'NULL', reason: '', issuer: 'Test', keyPair: institutionKeys }));
+
+    const results = person.challengeAll({ label: 'tribunal' });
+    expect(results).toHaveLength(1);
+    expect(results[0].id).toBe(r1.id);
+  });
+
+  it('requires all supplied filters to match', () => {
+    const person = createPerson();
+    const { commitment: c1, record: r1 } = person.commit('DWP urgent case', { a: 1 }, ['urgent']);
+    const { commitment: c2, record: r2 } = person.commit('DWP routine case', { b: 2 }, ['routine']);
+    const { commitment: c3, record: r3 } = person.commit('HMRC urgent case', { c: 3 }, ['urgent']);
+
+    person.receive(r1.id, buildReceipt({ commitment: c1, outcome: 'NULL', reason: '', issuer: 'DWP', keyPair: institutionKeys }));
+    person.receive(r2.id, buildReceipt({ commitment: c2, outcome: 'NULL', reason: '', issuer: 'DWP', keyPair: institutionKeys }));
+    person.receive(r3.id, buildReceipt({ commitment: c3, outcome: 'NULL', reason: '', issuer: 'HMRC', keyPair: institutionKeys }));
+
+    const results = person.challengeAll({ issuer: 'DWP', label: 'urgent', tags: ['urgent'] });
+    expect(results).toHaveLength(1);
+    expect(results[0].id).toBe(r1.id);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -219,6 +265,13 @@ describe('search', () => {
     person.receive(r2.id, buildReceipt({ commitment: c2, outcome: 'NULL', reason: '', issuer: 'X', keyPair: institutionKeys }));
     expect(person.search('SOVEREIGN')).toHaveLength(1);
     expect(person.search('NULL')).toHaveLength(1);
+  });
+
+  it('trims and matches label and tags case-insensitively', () => {
+    const person = createPerson();
+    person.commit('Uppercase Label', { a: 1 }, ['MixedCaseTag']);
+    expect(person.search('  uppercase  ')).toHaveLength(1);
+    expect(person.search('mixedcase')).toHaveLength(1);
   });
 });
 
@@ -276,6 +329,19 @@ describe('exportRecord', () => {
     const result = verifyPackage(pkg);
     expect(result.valid).toBe(true);
   });
+
+  it('throws for unknown record ID', () => {
+    const person = createPerson();
+    expect(() => person.exportRecord('missing-record')).toThrow('Record not found');
+  });
+
+  it('includes pending verification instructions when no receipt exists', () => {
+    const person = createPerson();
+    const { record } = person.commit('Pending export', { ref: 'P1' });
+    const pkg = person.exportRecord(record.id);
+    expect(pkg.verificationInstructions).toContain('  No receipt present in this record yet.');
+    expect(pkg.verificationInstructions).toContain('  Outcome: PENDING (no receipt received)');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -310,6 +376,20 @@ describe('exportVaultEncrypted / importVaultEncrypted', () => {
     const fresh = createPerson();
     expect(() => fresh.importVaultEncrypted(encrypted, 'wrong-passphrase')).toThrow();
   });
+
+  it('overwrites records with the same ID on import without removing existing records', () => {
+    const source = createPerson();
+    const { record } = source.commit('Original label', { original: true });
+    const encrypted = source.exportVaultEncrypted('passphrase');
+
+    const destination = createPerson();
+    destination.commit('Existing destination record', { keep: true });
+    destination.importVaultEncrypted(encrypted, 'passphrase');
+    const imported = destination.getRecord(record.id);
+
+    expect(destination.listRecords()).toHaveLength(2);
+    expect(imported?.label).toBe('Original label');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -322,6 +402,16 @@ describe('buildReceipt', () => {
     const person = createPerson();
     const { commitment } = person.commit('Receipt test', { data: 'x' });
     const receipt = buildReceipt({ commitment, outcome: 'SOVEREIGN', reason: 'Reviewed', issuer: 'Test', keyPair: keys });
+    expect(verifyReceipt(receipt)).toBe(true);
+  });
+
+  it('uses the supplied issuedAt timestamp in the signed receipt', () => {
+    const keys = generateKeyPair();
+    const person = createPerson();
+    const { commitment } = person.commit('Timestamped receipt', { data: 'x' });
+    const issuedAt = '2026-05-03T21:29:32.499Z';
+    const receipt = buildReceipt({ commitment, outcome: 'NULL', reason: 'Automated', issuer: 'Test', keyPair: keys, issuedAt });
+    expect(receipt.issuedAt).toBe(issuedAt);
     expect(verifyReceipt(receipt)).toBe(true);
   });
 });
@@ -354,5 +444,148 @@ describe('verifyRecord', () => {
     const updated = person.getRecord(record.id)!;
     const result = verifyRecord(updated);
     expect(result.valid).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// crypto primitives
+// ---------------------------------------------------------------------------
+
+describe('crypto primitives', () => {
+  it('hashes strings and buffers consistently with sha256', () => {
+    expect(sha256('hello')).toBe(sha256(Buffer.from('hello')));
+    expect(sha256('hello')).toHaveLength(64);
+  });
+
+  it('creates deterministic payload hashes when key order differs', () => {
+    const nonce = 'fixed-nonce';
+    expect(hashPayload({ b: 2, a: 1 }, nonce)).toBe(hashPayload({ a: 1, b: 2 }, nonce));
+  });
+
+  it('generates default 32-byte random hex values', () => {
+    const value = randomHex();
+    expect(value).toMatch(/^[0-9a-f]+$/);
+    expect(value).toHaveLength(64);
+  });
+
+  it('signs and verifies buffer messages', () => {
+    const keys = generateKeyPair();
+    const message = Buffer.from('buffer-message');
+    const signature = signMessage(message, keys.privateKey);
+    expect(verifySignature(message, signature, keys.publicKey)).toBe(true);
+  });
+
+  it('returns false for malformed signatures or public keys', () => {
+    const keys = generateKeyPair();
+    const signature = signMessage('message', keys.privateKey);
+    expect(verifySignature('message', 'not-hex', keys.publicKey)).toBe(false);
+    expect(verifySignature('message', signature, 'not-a-public-key')).toBe(false);
+  });
+
+  it('encrypts the same plaintext differently each time and decrypts both vaults', () => {
+    const plaintext = JSON.stringify({ secret: 'value' });
+    const first = encryptVault(plaintext, 'passphrase');
+    const second = encryptVault(plaintext, 'passphrase');
+
+    expect(first.ciphertext).not.toBe(second.ciphertext);
+    expect(first.iv).not.toBe(second.iv);
+    expect(decryptVault(first, 'passphrase')).toBe(plaintext);
+    expect(decryptVault(second, 'passphrase')).toBe(plaintext);
+  });
+
+  it('rejects corrupted encrypted vault data', () => {
+    const encrypted = encryptVault('secret', 'passphrase');
+    const corrupted = { ...encrypted, ciphertext: Buffer.from('corrupted').toString('base64') };
+    expect(() => decryptVault(corrupted, 'passphrase')).toThrow('Decryption failed');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// verifyPackage failure modes
+// ---------------------------------------------------------------------------
+
+describe('verifyPackage failure modes', () => {
+  it('marks packages invalid when facts no longer match the commitment', () => {
+    const person = createPerson();
+    const { commitment, record } = person.commit('Altered package', { original: true });
+    person.receive(record.id, buildReceipt({ commitment, outcome: 'SOVEREIGN', reason: '', issuer: 'Test', keyPair: institutionKeys }));
+    const pkg = person.exportRecord(record.id);
+    pkg.record.facts = { original: false };
+
+    const result = verifyPackage(pkg);
+
+    expect(result.valid).toBe(false);
+    expect(result.commitmentValid).toBe(false);
+    expect(result.signatureValid).toBe(true);
+    expect(result.hashesMatch).toBe(true);
+    expect(result.summary).toContain('The commitment hash does not match the facts');
+  });
+
+  it('marks packages invalid when the receipt points at a different commitment', () => {
+    const person = createPerson();
+    const { commitment, record } = person.commit('Hash mismatch', { original: true });
+    person.receive(record.id, buildReceipt({ commitment, outcome: 'SOVEREIGN', reason: '', issuer: 'Test', keyPair: institutionKeys }));
+    const pkg = person.exportRecord(record.id);
+    pkg.record.receipt = { ...pkg.record.receipt!, commitmentHash: '0'.repeat(64) };
+
+    const result = verifyPackage(pkg);
+
+    expect(result.valid).toBe(false);
+    expect(result.signatureValid).toBe(false);
+    expect(result.hashesMatch).toBe(false);
+    expect(result.summary).toContain('references a different commitment');
+  });
+
+  it('handles facts that cannot be serialised for commitment verification', () => {
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+    const record: VaultRecord = {
+      id: 'circular-record',
+      label: 'Circular record',
+      commitment: {
+        hash: 'not-recomputed',
+        timestamp: '2026-05-03T21:29:32.499Z',
+        nonce: 'nonce',
+        version: 1,
+      },
+      facts: circular,
+      createdAt: '2026-05-03T21:29:32.499Z',
+      tags: [],
+    };
+
+    const result = verifyPackage({
+      record,
+      verificationInstructions: [],
+      exportedBy: '@iris-gate/person',
+      exportedAt: '2026-05-03T21:29:32.499Z',
+    });
+
+    expect(result.commitmentValid).toBe(false);
+    expect(result.valid).toBe(false);
+  });
+
+  it('handles receipts with unserialisable fields during signature verification', () => {
+    const person = createPerson();
+    const { record } = person.commit('Bad receipt', { a: 1 });
+    const badReceipt = {
+      commitmentHash: record.commitment.hash,
+      outcome: 'SOVEREIGN',
+      reason: BigInt(1),
+      issuer: 'Test',
+      issuedAt: '2026-05-03T21:29:32.499Z',
+      signature: '00',
+      issuerPublicKey: institutionKeys.publicKey,
+    } as unknown as Receipt;
+    const pkg = {
+      record: { ...record, receipt: badReceipt },
+      verificationInstructions: [],
+      exportedBy: '@iris-gate/person',
+      exportedAt: '2026-05-03T21:29:32.499Z',
+    };
+
+    const result = verifyPackage(pkg);
+
+    expect(result.signatureValid).toBe(false);
+    expect(result.valid).toBe(false);
   });
 });
