@@ -7,6 +7,7 @@
 
 import { createHash, randomBytes, createCipheriv, createDecipheriv, generateKeyPairSync, sign, verify, pbkdf2Sync } from 'crypto';
 import type { KeyPair, EncryptedVault } from './types';
+import { canonicalize } from './canonical';
 
 // ---------------------------------------------------------------------------
 // Key generation
@@ -39,15 +40,20 @@ export function sha256(data: string | Buffer): string {
 }
 
 /**
- * Compute a SHA-256 commitment over a canonical JSON representation of
- * `payload`, mixed with a random `nonce` to prevent pre-image attacks.
+ * Compute a SHA-256 commitment over the RFC 8785-style canonical JSON
+ * representation of `payload`, mixed with a random `nonce` to prevent
+ * pre-image (guessing) attacks.
  *
- * @param payload - Arbitrary object; keys are sorted for determinism.
+ * Every nested key and value is covered by the hash. (Commitment format
+ * version 2. Version 1 used `JSON.stringify(payload, sortedTopLevelKeys)`,
+ * which dropped nested keys; for flat payloads both versions give the same
+ * hash, for nested payloads they differ.)
+ *
+ * @param payload - Arbitrary JSON-compatible object.
  * @param nonce   - Hex-encoded random bytes (from {@link randomHex}).
  */
 export function hashPayload(payload: Record<string, unknown>, nonce: string): string {
-  const canonical = JSON.stringify(payload, Object.keys(payload).sort());
-  return sha256(`${nonce}:${canonical}`);
+  return sha256(`${nonce}:${canonicalize(payload)}`);
 }
 
 /**
