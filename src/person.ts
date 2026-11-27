@@ -27,7 +27,8 @@ import type {
   VerificationResult,
 } from './types';
 import { generateKeyPair, hashPayload, randomHex, encryptVault, decryptVault } from './crypto';
-import { verifyReceipt } from './receipt';
+import { verifyReceiptSignature } from './receipt';
+import type { TrustedIssuers, VerifyOptions } from './issuer';
 import { verifyRecord } from './verify';
 
 // ---------------------------------------------------------------------------
@@ -110,13 +111,16 @@ export interface PersonClient {
 
   /**
    * Cryptographically verify a vault record.
-   * Re-hashes the facts and verifies the receipt signature.
+   * Re-hashes the facts, verifies the receipt signature, and checks the
+   * signing key against the trusted keys for the named issuer (from
+   * `createPerson(..., { trustedIssuers })` and/or `options`).
    *
    * @param recordId - The vault record ID to verify.
+   * @param options  - Extra trusted issuer keys / verification options.
    * @returns {@link VerificationResult} with full detail.
    * @throws If `recordId` is not found.
    */
-  verify(recordId: string): VerificationResult;
+  verify(recordId: string, options?: VerifyOptions): VerificationResult;
 
   /**
    * Export a self-contained {@link ExportPackage} for a tribunal, ombudsman,
@@ -189,7 +193,8 @@ export interface PersonClient {
  * const nullCases = person.challenge();
  * ```
  */
-export function createPerson(keyPair?: KeyPair): PersonClient {
+export function createPerson(keyPair?: KeyPair, clientOptions: { trustedIssuers?: TrustedIssuers } = {}): PersonClient {
+  const baseTrustedIssuers: TrustedIssuers = { ...(clientOptions.trustedIssuers ?? {}) };
   let activeKeys: KeyPair = keyPair ?? generateKeyPair();
   const vault: Map<string, VaultRecord> = new Map();
 
@@ -207,7 +212,7 @@ export function createPerson(keyPair?: KeyPair): PersonClient {
       hash,
       timestamp,
       nonce,
-      version: 1,
+      version: 2,
     };
 
     const record: VaultRecord = {
@@ -229,7 +234,9 @@ export function createPerson(keyPair?: KeyPair): PersonClient {
     if (!record) {
       throw new Error(`Record not found: ${recordId}`);
     }
-    if (!verifyReceipt(receipt)) {
+    // Integrity check only. Whether the key belongs to the named issuer is
+    // decided at verify() time against trusted issuer keys.
+    if (!verifyReceiptSignature(receipt)) {
       throw new Error('Receipt has an invalid signature and was rejected.');
     }
     const updated: VaultRecord = { ...record, receipt };
@@ -270,12 +277,16 @@ export function createPerson(keyPair?: KeyPair): PersonClient {
   }
 
   // ── verify ───────────────────────────────────────────────────────────────
-  function verify(recordId: string): VerificationResult {
+  function verify(recordId: string, options: VerifyOptions = {}): VerificationResult {
     const record = vault.get(recordId);
     if (!record) {
       throw new Error(`Record not found: ${recordId}`);
     }
-    return verifyRecord(record);
+    const trustedIssuers: TrustedIssuers = { ...baseTrustedIssuers };
+    for (const [issuer, keys] of Object.entries(options.trustedIssuers ?? {})) {
+      trustedIssuers[issuer] = [...(trustedIssuers[issuer] ?? []), ...keys];
+    }
+    return verifyRecord(record, { ...options, trustedIssuers });
   }
 
   // ── exportRecord ─────────────────────────────────────────────────────────
@@ -361,7 +372,8 @@ function buildVerificationInstructions(record: VaultRecord): string[] {
     '',
     '  To verify it yourself:',
     '    a) Take the "facts" object from this export.',
-    '    b) Sort the keys alphabetically and serialise to JSON (no extra spaces).',
+    '    b) Serialise it as RFC 8785 canonical JSON: keys sorted at every level',
+    '       (including nested objects), no extra spaces.',
     '    c) Prepend the nonce followed by a colon:',
     `       "${record.commitment.nonce}:<json>"`,
     '    d) Compute SHA-256 of that string.',
@@ -384,6 +396,10 @@ function buildVerificationInstructions(record: VaultRecord): string[] {
       `    b) Decode the signature hex: ${record.receipt.signature}`,
       '    c) Verify the ed25519 signature using the issuer public key above.',
       '    d) The verification must succeed.',
+      '    e) IMPORTANT: confirm the public key above really belongs to the named',
+      '       issuer, by comparing it with a key the institution publishes itself',
+      '       (for example its did:web document at https://<its-domain>/.well-known/did.json).',
+      '       A valid signature from an unknown key proves nothing about who signed it.',
       '',
       '--- Step 3: Confirm hash linkage ---',
       '',

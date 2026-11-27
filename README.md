@@ -68,6 +68,30 @@ flowchart TD
 
 The current implementation uses standard, auditable primitives available through Node.js built-in `crypto`, with no external runtime dependencies.
 
+### Commitment hashing (format version 2)
+
+Commitments are `SHA-256(nonce + ":" + canonical_json(facts))`, where `canonical_json` is RFC 8785-style canonical JSON: keys sorted at every depth, no whitespace. Every nested key and value is covered by the hash. Format version 1 dropped nested keys; flat fact objects hash identically under both versions, nested ones do not.
+
+### Issuer binding (who signed the receipt)
+
+A receipt embeds the public key that signed it, but that alone proves nothing about *who* signed it. Verification therefore requires the signing key to match a key trusted for the named issuer:
+
+```ts
+import { verifyPackage, verifyPackageWithDidWeb, trustedIssuersFromDidWeb } from '@iris-gate/person';
+
+// Pinned keys (SPKI DER hex or raw 32-byte hex)
+verifyPackage(pkg, { trustedIssuers: { 'Example Council': ['302a3005...'] } });
+
+// Or resolve the institution's own did:web document (https://<domain>/.well-known/did.json)
+const trusted = await trustedIssuersFromDidWeb({ 'Example Council': 'did:web:example.gov.uk' });
+verifyPackage(pkg, { trustedIssuers: trusted });
+
+// Or issue receipts with issuer = 'did:web:example.gov.uk' and resolve automatically
+await verifyPackageWithDidWeb(pkg);
+```
+
+Results carry `issuerStatus`: `TRUSTED`, `UNVERIFIED_ISSUER` (no trusted key known), `KEY_MISMATCH` (signed by a key that is not the issuer's) or `NO_RECEIPT`. Only `TRUSTED` is valid by default; `allowUnverifiedIssuer: true` is an explicit opt-in that still reports `UNVERIFIED_ISSUER`.
+
 ### AES-256-GCM + PBKDF2-SHA256 vault
 
 Sensitive vault records are encrypted for backup and restore using:

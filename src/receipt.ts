@@ -9,6 +9,8 @@
 
 import type { Commitment, Receipt, ReceiptOutcome, KeyPair } from './types';
 import { signMessage, verifySignature, hashPayload } from './crypto';
+import { checkIssuer } from './issuer';
+import type { VerifyOptions } from './issuer';
 
 // ---------------------------------------------------------------------------
 // Canonical form
@@ -109,17 +111,18 @@ export function verifyPersonCommitment(
 }
 
 // ---------------------------------------------------------------------------
-// verifyReceipt (internal helper re-exported for convenience)
+// verifyReceiptSignature / verifyReceipt
 // ---------------------------------------------------------------------------
 
 /**
- * Verify the ed25519 signature on a receipt.
- * Returns `true` only if the receipt body has not been altered and the
- * signature belongs to the stated issuer public key.
+ * Check only that the receipt's ed25519 signature is valid for the public key
+ * embedded in the receipt.
  *
- * @param receipt - The receipt to verify.
+ * **This does not prove who signed it.** Anyone can generate a key-pair and
+ * put any institution name in `issuer`. Use {@link verifyReceipt} with
+ * `trustedIssuers` to check the key belongs to the named institution.
  */
-export function verifyReceipt(receipt: Receipt): boolean {
+export function verifyReceiptSignature(receipt: Receipt): boolean {
   const canonical = receiptCanonical(
     receipt.commitmentHash,
     receipt.outcome,
@@ -128,4 +131,19 @@ export function verifyReceipt(receipt: Receipt): boolean {
     receipt.issuedAt,
   );
   return verifySignature(canonical, receipt.signature, receipt.issuerPublicKey);
+}
+
+/**
+ * Verify a receipt: the signature must be valid **and** the signing key must
+ * be one of the keys trusted for `receipt.issuer` (pinned, or resolved via
+ * did:web — see {@link trustedIssuersFromDidWeb}).
+ *
+ * Returns `false` when the issuer key cannot be tied to the named
+ * institution (`UNVERIFIED_ISSUER`) unless `allowUnverifiedIssuer` is set.
+ */
+export function verifyReceipt(receipt: Receipt, options: VerifyOptions = {}): boolean {
+  if (!verifyReceiptSignature(receipt)) return false;
+  const status = checkIssuer(receipt, options.trustedIssuers);
+  if (status === 'TRUSTED') return true;
+  return status === 'UNVERIFIED_ISSUER' && options.allowUnverifiedIssuer === true;
 }

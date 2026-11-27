@@ -66,7 +66,7 @@ describe('commit', () => {
     expect(commitment.hash).toBeTruthy();
     expect(commitment.nonce).toBeTruthy();
     expect(commitment.timestamp).toBeTruthy();
-    expect(commitment.version).toBe(1);
+    expect(commitment.version).toBe(2);
 
     expect(record.id).toBeTruthy();
     expect(record.label).toBe('Test case');
@@ -284,8 +284,9 @@ describe('verify', () => {
     const person = createPerson();
     const { commitment, record } = person.commit('Verify test', { key: 'value' });
     person.receive(record.id, buildReceipt({ commitment, outcome: 'SOVEREIGN', reason: '', issuer: 'Test', keyPair: institutionKeys }));
-    const result = person.verify(record.id);
+    const result = person.verify(record.id, { trustedIssuers: { Test: [institutionKeys.publicKey] } });
     expect(result.valid).toBe(true);
+    expect(result.issuerStatus).toBe('TRUSTED');
     expect(result.commitmentValid).toBe(true);
     expect(result.signatureValid).toBe(true);
     expect(result.hashesMatch).toBe(true);
@@ -326,7 +327,7 @@ describe('exportRecord', () => {
     const { commitment, record } = person.commit('Tribunal export', { detail: 'facts here' });
     person.receive(record.id, buildReceipt({ commitment, outcome: 'NULL', reason: 'Auto response', issuer: 'DWP', keyPair: institutionKeys }));
     const pkg = person.exportRecord(record.id);
-    const result = verifyPackage(pkg);
+    const result = verifyPackage(pkg, { trustedIssuers: { DWP: [institutionKeys.publicKey] } });
     expect(result.valid).toBe(true);
   });
 
@@ -402,7 +403,7 @@ describe('buildReceipt', () => {
     const person = createPerson();
     const { commitment } = person.commit('Receipt test', { data: 'x' });
     const receipt = buildReceipt({ commitment, outcome: 'SOVEREIGN', reason: 'Reviewed', issuer: 'Test', keyPair: keys });
-    expect(verifyReceipt(receipt)).toBe(true);
+    expect(verifyReceipt(receipt, { trustedIssuers: { Test: [keys.publicKey] } })).toBe(true);
   });
 
   it('uses the supplied issuedAt timestamp in the signed receipt', () => {
@@ -412,7 +413,7 @@ describe('buildReceipt', () => {
     const issuedAt = '2026-05-03T21:29:32.499Z';
     const receipt = buildReceipt({ commitment, outcome: 'NULL', reason: 'Automated', issuer: 'Test', keyPair: keys, issuedAt });
     expect(receipt.issuedAt).toBe(issuedAt);
-    expect(verifyReceipt(receipt)).toBe(true);
+    expect(verifyReceipt(receipt, { trustedIssuers: { Test: [keys.publicKey] } })).toBe(true);
   });
 });
 
@@ -442,7 +443,7 @@ describe('verifyRecord', () => {
     const { commitment, record } = person.commit('Verify record test', { v: 1 });
     person.receive(record.id, buildReceipt({ commitment, outcome: 'SOVEREIGN', reason: '', issuer: 'X', keyPair: institutionKeys }));
     const updated = person.getRecord(record.id)!;
-    const result = verifyRecord(updated);
+    const result = verifyRecord(updated, { trustedIssuers: { X: [institutionKeys.publicKey] } });
     expect(result.valid).toBe(true);
   });
 });

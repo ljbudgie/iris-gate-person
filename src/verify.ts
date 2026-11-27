@@ -11,7 +11,9 @@
 
 import type { ExportPackage, VaultRecord, Receipt, VerificationResult } from './types';
 import { hashPayload, verifySignature } from './crypto';
-import { verifyReceipt } from './receipt';
+import { verifyReceiptSignature } from './receipt';
+import { checkIssuer, resolveDidWeb } from './issuer';
+import type { VerifyOptions, FetchLike, IssuerStatus } from './issuer';
 
 // ---------------------------------------------------------------------------
 // verifyPackage
@@ -44,7 +46,7 @@ import { verifyReceipt } from './receipt';
  * console.log(result.summary);  // plain-English explanation
  * ```
  */
-export function verifyPackage(pkg: ExportPackage): VerificationResult {
+export function verifyPackage(pkg: ExportPackage, options: VerifyOptions = {}): VerificationResult {
   const { record } = pkg;
   const verifiedAt = new Date().toISOString();
 
@@ -61,7 +63,7 @@ export function verifyPackage(pkg: ExportPackage): VerificationResult {
   let signatureValid = false;
   if (record.receipt) {
     try {
-      signatureValid = verifyReceipt(record.receipt);
+      signatureValid = verifyReceiptSignature(record.receipt);
     } catch {
       signatureValid = false;
     }
@@ -73,18 +75,58 @@ export function verifyPackage(pkg: ExportPackage): VerificationResult {
     hashesMatch = record.receipt.commitmentHash === record.commitment.hash;
   }
 
-  const valid = commitmentValid && signatureValid && hashesMatch;
+  // ── Check 4: Issuer binding ──────────────────────────────────────────────
+  // The key embedded in the receipt proves nothing about *who* signed it. It
+  // must match a key trusted (pinned or did:web-resolved) for the named issuer.
+  let issuerStatus: IssuerStatus;
+  try {
+    issuerStatus = checkIssuer(record.receipt, options.trustedIssuers);
+  } catch {
+    issuerStatus = 'KEY_MISMATCH';
+  }
+  const issuerAcceptable =
+    issuerStatus === 'TRUSTED' ||
+    (issuerStatus === 'UNVERIFIED_ISSUER' && options.allowUnverifiedIssuer === true);
 
-  const summary = buildSummary({ commitmentValid, signatureValid, hashesMatch, valid, record });
+  const valid = commitmentValid && signatureValid && hashesMatch && issuerAcceptable;
+
+  const summary = buildSummary({ commitmentValid, signatureValid, hashesMatch, issuerStatus, valid, record });
 
   return {
     signatureValid,
     commitmentValid,
     hashesMatch,
+    issuerStatus,
     valid,
     summary,
     verifiedAt,
   };
+}
+
+// ---------------------------------------------------------------------------
+// verifyPackageWithDidWeb
+// ---------------------------------------------------------------------------
+
+/**
+ * Like {@link verifyPackage}, but when `receipt.issuer` is a `did:web`
+ * identifier (e.g. `did:web:example.gov.uk`) its DID document is fetched
+ * over HTTPS from the institution's own domain and the keys found there are
+ * trusted for that issuer. Resolution failures leave the issuer unverified.
+ */
+export async function verifyPackageWithDidWeb(
+  pkg: ExportPackage,
+  options: VerifyOptions & { fetch?: FetchLike } = {},
+): Promise<VerificationResult> {
+  const issuer = pkg.record.receipt?.issuer;
+  const trustedIssuers = { ...(options.trustedIssuers ?? {}) };
+  if (issuer && issuer.startsWith('did:web:') && !trustedIssuers[issuer]) {
+    try {
+      trustedIssuers[issuer] = await resolveDidWeb(issuer, options.fetch);
+    } catch {
+      // leave unresolved → UNVERIFIED_ISSUER
+    }
+  }
+  return verifyPackage(pkg, { ...options, trustedIssuers });
 }
 
 // ---------------------------------------------------------------------------
@@ -98,14 +140,14 @@ export function verifyPackage(pkg: ExportPackage): VerificationResult {
  * @param record - The vault record to verify.
  * @returns {@link VerificationResult}
  */
-export function verifyRecord(record: VaultRecord): VerificationResult {
+export function verifyRecord(record: VaultRecord, options: VerifyOptions = {}): VerificationResult {
   const pkg: ExportPackage = {
     record,
     verificationInstructions: [],
     exportedBy: '@iris-gate/person',
     exportedAt: new Date().toISOString(),
   };
-  return verifyPackage(pkg);
+  return verifyPackage(pkg, options);
 }
 
 // ---------------------------------------------------------------------------
@@ -116,10 +158,11 @@ function buildSummary(opts: {
   commitmentValid: boolean;
   signatureValid: boolean;
   hashesMatch: boolean;
+  issuerStatus: IssuerStatus;
   valid: boolean;
   record: VaultRecord;
 }): string {
-  const { commitmentValid, signatureValid, hashesMatch, valid, record } = opts;
+  const { commitmentValid, signatureValid, hashesMatch, issuerStatus, valid, record } = opts;
   const lines: string[] = [];
 
   lines.push(`Verification of record "${record.label}" (id: ${record.id})`);
@@ -127,10 +170,15 @@ function buildSummary(opts: {
   lines.push(`  [${commitmentValid ? '✓' : '✗'}] Commitment hash matches the supplied facts + nonce`);
   lines.push(`  [${signatureValid ? '✓' : '✗'}] Institution signature is cryptographically valid`);
   lines.push(`  [${hashesMatch ? '✓' : '✗'}] Receipt commitment hash matches the record commitment`);
+  lines.push(`  [${issuerStatus === 'TRUSTED' ? '✓' : '✗'}] Signing key belongs to the named issuer (${issuerStatus})`);
   lines.push('');
 
   if (valid) {
-    lines.push('RESULT: VALID – All checks passed. The receipt is authentic and unaltered.');
+    lines.push(
+      issuerStatus === 'TRUSTED'
+        ? 'RESULT: VALID – All checks passed. The receipt is authentic, unaltered and signed by a trusted key for the named issuer.'
+        : 'RESULT: VALID (UNVERIFIED_ISSUER accepted by caller) – the signing key is NOT tied to the named issuer.',
+    );
     if (record.receipt) {
       lines.push(`        Issued by: ${record.receipt.issuer}`);
       lines.push(`        Outcome:   ${record.receipt.outcome}`);
@@ -148,6 +196,14 @@ function buildSummary(opts: {
     }
     if (!hashesMatch) {
       lines.push('        • The receipt references a different commitment than this record.');
+    }
+    if (issuerStatus === 'UNVERIFIED_ISSUER') {
+      lines.push('        • UNVERIFIED_ISSUER: no trusted key is known for this issuer, so the receipt');
+      lines.push('          cannot be tied to the named institution. Pin its key or resolve its did:web.');
+    }
+    if (issuerStatus === 'KEY_MISMATCH') {
+      lines.push('        • KEY_MISMATCH: the receipt was signed with a key that is not one of the');
+      lines.push('          named institution\'s trusted keys. It may be an impersonation.');
     }
     if (!record.receipt) {
       lines.push('        • No receipt is present in this record.');

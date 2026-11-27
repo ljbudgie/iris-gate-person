@@ -1,3 +1,5 @@
+import type { IssuerStatus } from './issuer';
+
 /**
  * @iris-gate/person – Shared TypeScript types and interfaces.
  *
@@ -134,7 +136,12 @@ export interface VerificationResult {
   commitmentValid: boolean;
   /** Whether the receipt's commitment hash matches the record's commitment. */
   hashesMatch: boolean;
-  /** Overall pass/fail. True only when all checks pass. */
+  /**
+   * Whether the signing key is tied to the named issuer:
+   * `TRUSTED`, `UNVERIFIED_ISSUER`, `KEY_MISMATCH` or `NO_RECEIPT`.
+   */
+  issuerStatus: IssuerStatus;
+  /** Overall pass/fail. True only when all checks pass, including issuerStatus === 'TRUSTED'. */
   valid: boolean;
   /** Human-readable summary of the verification. */
   summary: string;
